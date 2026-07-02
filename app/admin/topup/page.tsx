@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 
 interface StaffUser {
   _id: string;
@@ -8,41 +8,49 @@ interface StaffUser {
   workEmail: string;
   employeeId: string;
   walletBalance: number;
+  isActive: boolean;
 }
 
 export default function AdminTopupPage() {
   const [search, setSearch] = useState('');
-  const [users, setUsers] = useState<StaffUser[]>([]);
+  const [allUsers, setAllUsers] = useState<StaffUser[]>([]);
   const [selectedUser, setSelectedUser] = useState<StaffUser | null>(null);
   const [amount, setAmount] = useState('');
-  const [loadingUsers, setLoadingUsers] = useState(false);
+  const [loadingUsers, setLoadingUsers] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [success, setSuccess] = useState(false);
   const [error, setError] = useState('');
 
   const quickAmounts = [100, 200, 500, 1000];
 
-  const loadUsers = useCallback(async (q = '') => {
-    if (!q) {
-      setUsers([]);
-      return;
+  // Load all staff users once on mount
+  useEffect(() => {
+    async function fetchUsers() {
+      setLoadingUsers(true);
+      try {
+        const res = await fetch('/api/admin/users');
+        const data = await res.json();
+        setAllUsers(data.users ?? []);
+      } catch {
+        setError('Failed to load user list.');
+      } finally {
+        setLoadingUsers(false);
+      }
     }
-    setLoadingUsers(true);
-    try {
-      const res = await fetch(`/api/admin/users?q=${encodeURIComponent(q)}`);
-      const data = await res.json();
-      setUsers(data.users ?? []);
-    } catch {
-      setError('Failed to fetch user list.');
-    } finally {
-      setLoadingUsers(false);
-    }
+    fetchUsers();
   }, []);
 
-  useEffect(() => {
-    const timer = setTimeout(() => loadUsers(search), 300);
-    return () => clearTimeout(timer);
-  }, [search, loadUsers]);
+  // Filter client-side as admin types
+  const filteredUsers = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return allUsers;
+    return allUsers.filter(
+      (u) =>
+        u.fullName.toLowerCase().includes(q) ||
+        u.workEmail.toLowerCase().includes(q) ||
+        u.employeeId.toLowerCase().includes(q)
+    );
+  }, [search, allUsers]);
 
   async function handleTopUp(e: React.FormEvent) {
     e.preventDefault();
@@ -74,8 +82,12 @@ export default function AdminTopupPage() {
       }
 
       setSuccess(true);
-      // Update local wallet balance preview
-      setSelectedUser((prev) => prev ? { ...prev, walletBalance: data.newBalance } : null);
+      // Update balance in both selected user and the master list
+      const newBalance = data.newBalance;
+      setSelectedUser((prev) => (prev ? { ...prev, walletBalance: newBalance } : null));
+      setAllUsers((prev) =>
+        prev.map((u) => (u._id === selectedUser._id ? { ...u, walletBalance: newBalance } : u))
+      );
       setAmount('');
     } catch {
       setError('Network error. Please try again.');
@@ -88,81 +100,123 @@ export default function AdminTopupPage() {
     <div className="space-y-5">
       <div>
         <h1 className="text-xl font-bold text-[var(--foreground)]">Top Up Wallet</h1>
-        <p className="text-sm text-[var(--muted)] mt-0.5">Search staff user and add balance</p>
+        <p className="text-sm text-[var(--muted)] mt-0.5">Select a staff member and add balance</p>
       </div>
 
       <form onSubmit={handleTopUp} className="space-y-4">
-        {/* User Search / Selection */}
+        {/* ── User Selection ─────────────────────────────────────────────── */}
         <div className="space-y-2">
           <label className="block text-sm font-semibold text-[var(--foreground)]">
             Select Staff User
           </label>
+
           {selectedUser ? (
+            /* ── Selected user card ── */
             <div className="bg-[var(--card)] border-2 border-[var(--border)] rounded-2xl p-4 flex items-center justify-between shadow-sm">
               <div>
                 <p className="font-bold text-sm text-[var(--foreground)]">{selectedUser.fullName}</p>
                 <p className="text-xs text-[var(--muted)] mt-0.5">{selectedUser.workEmail}</p>
-                <p className="text-xs text-[var(--foreground)] font-bold mt-1">Current Balance: Rs.{selectedUser.walletBalance.toFixed(2)}</p>
+                <p className="text-xs text-[var(--foreground)] font-bold mt-1">
+                  Current Balance: Rs.{selectedUser.walletBalance.toFixed(2)}
+                </p>
               </div>
               <button
                 type="button"
                 onClick={() => {
                   setSelectedUser(null);
                   setSuccess(false);
+                  setError('');
+                  setAmount('');
                 }}
-                className="text-xs font-bold text-red-500 border border-red-200 bg-red-50/50 px-2.5 py-1.5 rounded-lg hover:bg-red-50"
+                className="text-xs font-bold text-red-500 border border-red-200 bg-red-50/50 px-2.5 py-1.5 rounded-lg hover:bg-red-50 transition-colors"
               >
                 Change
               </button>
             </div>
           ) : (
-            <div className="space-y-2 relative">
-              <input
-                type="text"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder="Type staff name or email…"
-                className="w-full h-12 px-3.5 rounded-xl border-2 border-[var(--border)] bg-[var(--card)] text-[var(--foreground)] text-sm focus:ring-2 focus:ring-[var(--foreground)] focus:border-[var(--foreground)] transition-all duration-150"
-              />
+            /* ── Search + List ── */
+            <div className="space-y-2">
+              {/* Search bar */}
+              <div className="relative">
+                <svg
+                  className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--muted)] pointer-events-none"
+                  fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"
+                >
+                  <circle cx="11" cy="11" r="8" />
+                  <path d="m21 21-4.35-4.35" />
+                </svg>
+                <input
+                  type="text"
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  placeholder="Search by name, email or employee ID…"
+                  className="w-full h-11 pl-10 pr-3.5 rounded-xl border-2 border-[var(--border)] bg-[var(--card)] text-[var(--foreground)] text-sm focus:ring-2 focus:ring-[var(--foreground)] focus:border-[var(--foreground)] transition-all duration-150"
+                />
+                {loadingUsers && (
+                  <div className="absolute right-3.5 top-1/2 -translate-y-1/2">
+                    <div className="w-4 h-4 border-2 border-[var(--accent)] border-t-transparent rounded-full animate-spin" />
+                  </div>
+                )}
+              </div>
 
-              {loadingUsers && (
-                <div className="absolute right-3.5 top-3.5">
-                  <div className="w-5 h-5 border-2 border-[var(--accent)] border-t-transparent rounded-full animate-spin" />
+              {/* Users list */}
+              {!loadingUsers && (
+                <div className="border-2 border-[var(--border)] rounded-xl overflow-hidden bg-[var(--card)] shadow-sm max-h-64 overflow-y-auto">
+                  {filteredUsers.length === 0 ? (
+                    <div className="px-4 py-6 text-center text-sm text-[var(--muted)]">
+                      {search ? 'No users match your search.' : 'No staff users registered yet.'}
+                    </div>
+                  ) : (
+                    <ul className="divide-y divide-[var(--border)]">
+                      {filteredUsers.map((user) => (
+                        <li key={user._id}>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSelectedUser(user);
+                              setSearch('');
+                              setSuccess(false);
+                              setError('');
+                            }}
+                            className="w-full text-left px-4 py-3 hover:bg-slate-50 active:bg-slate-100 transition-colors flex items-center justify-between gap-3"
+                          >
+                            <div className="min-w-0">
+                              <p className="font-bold text-xs text-[var(--foreground)] truncate">
+                                {user.fullName}
+                              </p>
+                              <p className="text-[10px] text-[var(--muted)] truncate">
+                                {user.workEmail} · {user.employeeId}
+                              </p>
+                            </div>
+                            <span className="text-xs font-bold text-[var(--foreground)] shrink-0">
+                              Rs.{user.walletBalance.toFixed(2)}
+                            </span>
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
                 </div>
               )}
 
-              {/* Suggestions dropdown */}
-              {users.length > 0 && (
-                <div className="absolute left-0 right-0 top-13 z-10 bg-[var(--card)] border-2 border-[var(--border)] rounded-xl shadow-lg divide-y divide-[var(--border)] max-h-48 overflow-y-auto">
-                  {users.map((user) => (
-                    <button
-                      key={user._id}
-                      type="button"
-                      onClick={() => {
-                        setSelectedUser(user);
-                        setUsers([]);
-                        setSearch('');
-                      }}
-                      className="w-full text-left px-4 py-3 hover:bg-slate-50 transition-colors flex items-center justify-between"
-                    >
-                      <div>
-                        <p className="font-bold text-xs text-[var(--foreground)]">{user.fullName}</p>
-                        <p className="text-[10px] text-[var(--muted)]">{user.workEmail}</p>
-                      </div>
-                      <span className="text-xs font-bold text-[var(--foreground)]">Rs.{user.walletBalance.toFixed(2)}</span>
-                    </button>
-                  ))}
-                </div>
+              {/* User count badge */}
+              {!loadingUsers && allUsers.length > 0 && (
+                <p className="text-[10px] text-[var(--muted)] text-right pr-1">
+                  {filteredUsers.length} of {allUsers.length} staff member{allUsers.length !== 1 ? 's' : ''}
+                </p>
               )}
             </div>
           )}
         </div>
 
+        {/* ── Amount section (only when user is selected) ─────────────────── */}
         {selectedUser && (
           <>
             {/* Quick Amounts */}
             <div className="space-y-2">
-              <label className="block text-sm font-semibold text-[var(--foreground)]">Quick TopUp Amounts</label>
+              <label className="block text-sm font-semibold text-[var(--foreground)]">
+                Quick TopUp Amounts
+              </label>
               <div className="grid grid-cols-4 gap-2">
                 {quickAmounts.map((q) => (
                   <button
@@ -183,11 +237,16 @@ export default function AdminTopupPage() {
 
             {/* Custom Amount */}
             <div className="space-y-1.5">
-              <label className="block text-sm font-semibold text-[var(--foreground)]" htmlFor="topup-amount-form">
+              <label
+                className="block text-sm font-semibold text-[var(--foreground)]"
+                htmlFor="topup-amount-form"
+              >
                 Custom TopUp Amount
               </label>
               <div className="relative">
-                <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-[var(--muted)] text-sm font-bold">Rs.</span>
+                <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-[var(--muted)] text-sm font-bold">
+                  Rs.
+                </span>
                 <input
                   id="topup-amount-form"
                   type="number"
@@ -213,7 +272,7 @@ export default function AdminTopupPage() {
               </div>
             )}
 
-            {/* Submit button */}
+            {/* Submit */}
             <div className="pt-2">
               <button
                 id="submit-topup-btn"
@@ -221,7 +280,9 @@ export default function AdminTopupPage() {
                 disabled={submitting || !amount}
                 className="w-full h-12 rounded-xl bg-[var(--foreground)] text-white text-sm font-bold transition-all duration-150 hover:bg-[var(--accent)] disabled:opacity-40"
               >
-                {submitting ? 'Completing TopUp…' : `Confirm TopUp · Rs.${Number(amount || 0).toFixed(2)}`}
+                {submitting
+                  ? 'Completing TopUp…'
+                  : `Confirm TopUp · Rs.${Number(amount || 0).toFixed(2)}`}
               </button>
             </div>
           </>
