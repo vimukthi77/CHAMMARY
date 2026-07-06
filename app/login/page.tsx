@@ -2,10 +2,18 @@
 
 import { useState, useEffect, FormEvent } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
 
 export default function LoginPage() {
-  const router = useRouter();
+  // Use a full-page navigation after login instead of router.push. On older
+  // iOS Safari (e.g. iOS 15.x), a cookie set on a fetch() response is committed
+  // to the cookie jar asynchronously; a client-side router.push can race ahead
+  // of it, so middleware sees no session and bounces back to /login (looks like
+  // the page "refreshed" and cleared the form). A hard navigation issues a real
+  // document request that reliably carries the freshly-set session cookie.
+  function goToDashboard(role?: string) {
+    window.location.assign(role === 'admin' ? '/admin' : '/dashboard');
+  }
+
   const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -19,9 +27,18 @@ export default function LoginPage() {
   const [showBiometricsLink, setShowBiometricsLink] = useState(false);
 
   useEffect(() => {
-    const registered = localStorage.getItem('has_biometrics_registered') === 'true';
-    const email = localStorage.getItem('biometric_email') || '';
-    const name = localStorage.getItem('biometric_user_name') || '';
+    // NOTE: iOS Safari with "Block All Cookies" / Private Browsing throws on
+    // localStorage access. Guard it so the login form still renders and works.
+    let registered = false;
+    let email = '';
+    let name = '';
+    try {
+      registered = localStorage.getItem('has_biometrics_registered') === 'true';
+      email = localStorage.getItem('biometric_email') || '';
+      name = localStorage.getItem('biometric_user_name') || '';
+    } catch {
+      // Storage blocked by browser settings — fall back to password login.
+    }
     if (registered && email) {
       setHasBiometric(true);
       setBiometricEmail(email);
@@ -69,7 +86,7 @@ export default function LoginPage() {
         throw new Error(verifyData.error || 'Biometric verification failed.');
       }
 
-      router.push(verifyData.role === 'admin' ? '/admin' : '/dashboard');
+      goToDashboard(verifyData.role);
     } catch (err: any) {
       console.error(err);
       setError(err.message || 'Biometric verification failed or was cancelled.');
@@ -96,7 +113,8 @@ export default function LoginPage() {
         return;
       }
 
-      router.push(data.role === 'admin' ? '/admin' : '/dashboard');
+      goToDashboard(data.role);
+      return;
     } catch {
       setError('Network error. Please try again.');
     } finally {
