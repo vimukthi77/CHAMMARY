@@ -6,26 +6,63 @@ import User from '@/lib/models/User';
 import MealPrice from '@/lib/models/MealPrice';
 import MealRequest from '@/lib/models/MealRequest';
 
-/** Returns today's date as YYYY-MM-DD in UTC */
-function todayUTC(): string {
-  return new Date().toISOString().slice(0, 10);
+/** Helper to get current date, time, and minutes in IST (UTC+5:30) */
+function getISTDateTime(): { istTime: Date; dateStr: string; todayMinutes: number } {
+  const now = new Date();
+  const utc = now.getTime() + now.getTimezoneOffset() * 60000;
+  const istTime = new Date(utc + 3600000 * 5.5);
+  const year = istTime.getFullYear();
+  const month = String(istTime.getMonth() + 1).padStart(2, '0');
+  const day = String(istTime.getDate()).padStart(2, '0');
+  const dateStr = `${year}-${month}-${day}`;
+  const todayMinutes = istTime.getHours() * 60 + istTime.getMinutes();
+  return { istTime, dateStr, todayMinutes };
 }
 
-// ── GET: fetch today's existing meal request ──────────────────────────────────
+/** Helper to get tomorrow's date string in IST */
+function getTomorrowISTDateStr(istTime: Date): string {
+  const tomorrowTime = new Date(istTime.getTime() + 24 * 60 * 60 * 1000);
+  const tYear = tomorrowTime.getFullYear();
+  const tMonth = String(tomorrowTime.getMonth() + 1).padStart(2, '0');
+  const tDay = String(tomorrowTime.getDate()).padStart(2, '0');
+  return `${tYear}-${tMonth}-${tDay}`;
+}
+
+function parseTimeToMinutes(timeStr: string): number {
+  const [h, m] = timeStr.split(':').map(Number);
+  return h * 60 + m;
+}
+
+// ── GET: fetch today's or tomorrow's existing meal request ───────────────────
 export async function GET() {
   const session = await getSessionUser();
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   await connectDB();
-  const today = todayUTC();
-  const request = await MealRequest.findOne({ userId: session.userId, date: today });
-
+  
   const prices = await MealPrice.findOne();
+  if (!prices) {
+    return NextResponse.json({ error: 'Meal prices not configured.' }, { status: 500 });
+  }
 
-  return NextResponse.json({ request, prices });
+  const { istTime, dateStr: todayDateStr, todayMinutes } = getISTDateTime();
+  const dinnerLimit = parseTimeToMinutes(prices.dinnerCutoff || '18:00');
+  const isAfterDinnerCutoff = todayMinutes >= dinnerLimit;
+
+  let targetDate = todayDateStr;
+  let isTomorrow = false;
+
+  if (isAfterDinnerCutoff) {
+    targetDate = getTomorrowISTDateStr(istTime);
+    isTomorrow = true;
+  }
+
+  const request = await MealRequest.findOne({ userId: session.userId, date: targetDate });
+
+  return NextResponse.json({ request, prices, targetDate, isTomorrow });
 }
 
-// ── POST: upsert today's meal request (server-side price computation) ─────────
+// ── POST: upsert today's or tomorrow's meal request (server-side computation) ─
 export async function POST(req: NextRequest) {
   const session = await getSessionUser();
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -40,14 +77,25 @@ export async function POST(req: NextRequest) {
 
   const dbSession = await mongoose.startSession();
   try {
-    let result: { request: object | null; balanceAfter: number } | null = null;
+    let result: { request: object | null; balanceAfter: number; targetDate: string; isTomorrow: boolean } | null = null;
 
     await dbSession.withTransaction(async () => {
-      const today = todayUTC();
+      const { istTime, dateStr: todayDateStr, todayMinutes } = getISTDateTime();
 
       // 1. Fetch current meal prices and cutoffs server-side
       const prices = await MealPrice.findOne().session(dbSession);
       if (!prices) throw new Error('Meal prices not configured.');
+
+      const dinnerLimit = parseTimeToMinutes(prices.dinnerCutoff || '18:00');
+      const isAfterDinnerCutoff = todayMinutes >= dinnerLimit;
+
+      let targetDate = todayDateStr;
+      let isTomorrow = false;
+
+      if (isAfterDinnerCutoff) {
+        targetDate = getTomorrowISTDateStr(istTime);
+        isTomorrow = true;
+      }
 
       const newTotal =
         (breakfast ? prices.breakfastPrice : 0) +
@@ -58,10 +106,10 @@ export async function POST(req: NextRequest) {
       const user = await User.findById(session.userId).session(dbSession);
       if (!user) throw new Error('User not found.');
 
-      // 3. Check for existing request today
+      // 3. Check for existing request on target date
       const existing = await MealRequest.findOne({
         userId: session.userId,
-        date: today,
+        date: targetDate,
       }).session(dbSession);
 
       // Require selecting at least one meal if no request exists yet
@@ -73,43 +121,34 @@ export async function POST(req: NextRequest) {
       }
 
       // ── Cutoff times validation (IST UTC+5:30) ───────────────────────────
-      const now = new Date();
-      const utc = now.getTime() + now.getTimezoneOffset() * 60000;
-      const istTime = new Date(utc + 3600000 * 5.5);
-      const hours = istTime.getHours();
-      const minutes = istTime.getMinutes();
-      const totalMinutes = hours * 60 + minutes;
+      // Apply only if the target is today's meals (isTomorrow is false)
+      if (!isTomorrow) {
+        const BREAKFAST_LIMIT = parseTimeToMinutes(prices.breakfastCutoff || '07:00');
+        const LUNCH_LIMIT = parseTimeToMinutes(prices.lunchCutoff || '10:30');
+        const DINNER_LIMIT = parseTimeToMinutes(prices.dinnerCutoff || '18:00');
 
-      const parseTimeToMinutes = (timeStr: string) => {
-        const [h, m] = timeStr.split(':').map(Number);
-        return h * 60 + m;
-      };
+        const prevBreakfast = existing ? existing.breakfast : false;
+        const prevLunch = existing ? existing.lunch : false;
+        const prevDinner = existing ? existing.dinner : false;
 
-      const BREAKFAST_LIMIT = parseTimeToMinutes(prices.breakfastCutoff || '07:00');
-      const LUNCH_LIMIT = parseTimeToMinutes(prices.lunchCutoff || '10:30');
-      const DINNER_LIMIT = parseTimeToMinutes(prices.dinnerCutoff || '18:00');
-
-      const prevBreakfast = existing ? existing.breakfast : false;
-      const prevLunch = existing ? existing.lunch : false;
-      const prevDinner = existing ? existing.dinner : false;
-
-      if (breakfast !== prevBreakfast && totalMinutes >= BREAKFAST_LIMIT) {
-        throw Object.assign(
-          new Error(`Breakfast orders cannot be changed after ${prices.breakfastCutoff || '7:00 AM'} IST.`),
-          { code: 'CUTOFF_EXCEEDED' }
-        );
-      }
-      if (lunch !== prevLunch && totalMinutes >= LUNCH_LIMIT) {
-        throw Object.assign(
-          new Error(`Lunch orders cannot be changed after ${prices.lunchCutoff || '10:30 AM'} IST.`),
-          { code: 'CUTOFF_EXCEEDED' }
-        );
-      }
-      if (dinner !== prevDinner && totalMinutes >= DINNER_LIMIT) {
-        throw Object.assign(
-          new Error(`Dinner orders cannot be changed after ${prices.dinnerCutoff || '6:00 PM'} IST.`),
-          { code: 'CUTOFF_EXCEEDED' }
-        );
+        if (breakfast !== prevBreakfast && todayMinutes >= BREAKFAST_LIMIT) {
+          throw Object.assign(
+            new Error(`Breakfast orders cannot be changed after ${prices.breakfastCutoff || '7:00 AM'} IST.`),
+            { code: 'CUTOFF_EXCEEDED' }
+          );
+        }
+        if (lunch !== prevLunch && todayMinutes >= LUNCH_LIMIT) {
+          throw Object.assign(
+            new Error(`Lunch orders cannot be changed after ${prices.lunchCutoff || '10:30 AM'} IST.`),
+            { code: 'CUTOFF_EXCEEDED' }
+          );
+        }
+        if (dinner !== prevDinner && todayMinutes >= DINNER_LIMIT) {
+          throw Object.assign(
+            new Error(`Dinner orders cannot be changed after ${prices.dinnerCutoff || '6:00 PM'} IST.`),
+            { code: 'CUTOFF_EXCEEDED' }
+          );
+        }
       }
 
       let balanceDiff: number;
@@ -156,7 +195,7 @@ export async function POST(req: NextRequest) {
           [
             {
               userId: session.userId,
-              date: today,
+              date: targetDate,
               breakfast,
               lunch,
               dinner,
@@ -169,7 +208,7 @@ export async function POST(req: NextRequest) {
         mealRequest = created;
       }
 
-      result = { request: mealRequest, balanceAfter: updatedBalance };
+      result = { request: mealRequest, balanceAfter: updatedBalance, targetDate, isTomorrow };
     });
 
     return NextResponse.json(result, { status: 200 });

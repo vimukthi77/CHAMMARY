@@ -24,6 +24,7 @@ export default function AdminRequestsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
+  const [activeTab, setActiveTab] = useState<'all' | 'breakfast' | 'lunch' | 'dinner'>('all');
 
   // Local checked state for kitchen staff to tick off orders physically prepared
   const [preparedItems, setPreparedItems] = useState<Record<string, { breakfast?: boolean; lunch?: boolean; dinner?: boolean }>>({});
@@ -77,6 +78,18 @@ export default function AdminRequestsPage() {
     year: 'numeric',
   });
 
+  // Filter requests based on selected tab
+  const filteredRequests = requests.filter((r) => {
+    if (activeTab === 'all') return true;
+    return r[activeTab] === true;
+  });
+
+  const handleDownload = (format: 'pdf' | 'xlsx') => {
+    const mealParam = activeTab === 'all' ? '' : `&mealType=${activeTab}`;
+    const url = `/api/admin/reports?startDate=${date}&endDate=${date}&format=${format}${mealParam}`;
+    window.open(url, '_blank');
+  };
+
   return (
     <div className="space-y-5">
       <div>
@@ -124,24 +137,125 @@ export default function AdminRequestsPage() {
             </div>
           </div>
 
+          {/* Tab Navigation */}
+          <div className="flex border-b border-[var(--border)]">
+            {(['all', 'breakfast', 'lunch', 'dinner'] as const).map((tab) => {
+              const isActive = activeTab === tab;
+              const count = tab === 'all' 
+                ? requests.length 
+                : tab === 'breakfast' 
+                ? stats.breakfast 
+                : tab === 'lunch' 
+                ? stats.lunch 
+                : stats.dinner;
+
+              return (
+                <button
+                  key={tab}
+                  onClick={() => setActiveTab(tab)}
+                  className={`flex-1 py-3 text-xs font-bold text-center border-b-2 transition-all capitalize flex items-center justify-center gap-1 cursor-pointer ${
+                    isActive
+                      ? 'border-[var(--foreground)] text-[var(--foreground)]'
+                      : 'border-transparent text-[var(--muted)] hover:text-[var(--foreground)]'
+                  }`}
+                >
+                  <span>{tab}</span>
+                  {count > 0 && (
+                    <span className="text-[9px] px-1.5 py-0.2 rounded-full bg-slate-100 text-slate-600 font-bold">
+                      {count}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Quick Download Options for Active Tab */}
+          <div className="bg-[var(--card)] border-2 border-[var(--border)] rounded-2xl p-4 shadow-sm space-y-3">
+            <div className="flex justify-between items-center">
+              <h3 className="text-xs font-bold text-[var(--muted)] uppercase tracking-wider">
+                {activeTab === 'all' ? 'Overall Reports' : `${activeTab} Reports`}
+              </h3>
+              <span className="text-[10px] font-bold text-[var(--muted)] uppercase">
+                {activeTab === 'all' ? `${requests.length} total orders` : `${filteredRequests.length} orders`}
+              </span>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <button
+                onClick={() => handleDownload('pdf')}
+                className="flex items-center justify-center gap-2 h-10 rounded-xl border border-[var(--border)] hover:border-[var(--foreground)] text-xs font-bold text-[var(--foreground)] bg-white transition-all cursor-pointer hover:bg-slate-50"
+              >
+                <span>Download PDF</span>
+              </button>
+              <button
+                onClick={() => handleDownload('xlsx')}
+                className="flex items-center justify-center gap-2 h-10 rounded-xl border border-[var(--border)] hover:border-[var(--foreground)] text-xs font-bold text-[var(--foreground)] bg-white transition-all cursor-pointer hover:bg-slate-50"
+              >
+                <span>Download Excel</span>
+              </button>
+            </div>
+          </div>
+
           <div className="flex justify-between items-center px-1">
             <p className="text-xs font-bold text-[var(--muted)] uppercase tracking-wide">
               {formattedDate}
             </p>
-            <p className="text-xs text-[var(--muted)]">{requests.length} orders total</p>
+            <p className="text-xs text-[var(--muted)]">{filteredRequests.length} orders shown</p>
           </div>
 
-          {requests.length === 0 ? (
+          {filteredRequests.length === 0 ? (
             <div className="text-center py-12 bg-[var(--card)] border-2 border-[var(--border)] rounded-2xl">
               <p className="text-sm font-medium text-[var(--muted)]">No meal requests for this day.</p>
             </div>
           ) : (
             <div className="space-y-3">
-              {requests.map((r) => {
+              {filteredRequests.map((r) => {
                 const prep = preparedItems[r._id] || {};
                 const name = r.userId?.fullName || 'Unknown User';
                 const empId = r.userId?.employeeId || 'N/A';
 
+                // Specific tab single meal checklist layout
+                if (activeTab !== 'all') {
+                  const isPrepared = prep[activeTab] || false;
+
+                  const buttonStyle = isPrepared
+                    ? 'bg-emerald-50 border-emerald-300 text-emerald-800 hover:bg-emerald-100/50'
+                    : activeTab === 'breakfast'
+                    ? 'bg-orange-50/50 border-orange-200 text-orange-800 hover:bg-orange-50'
+                    : activeTab === 'lunch'
+                    ? 'bg-green-50/50 border-green-200 text-green-800 hover:bg-green-50'
+                    : 'bg-blue-50/50 border-blue-200 text-blue-800 hover:bg-blue-50';
+
+                  return (
+                    <div
+                      key={r._id}
+                      className="bg-[var(--card)] border-2 border-[var(--border)] rounded-2xl p-4 shadow-sm flex items-center justify-between gap-4 transition-all"
+                    >
+                      <div>
+                        <p className="font-bold text-sm text-[var(--foreground)]">{name}</p>
+                        <p className="text-xs text-[var(--muted)]">Employee ID: {empId}</p>
+                      </div>
+                      <button
+                        onClick={() => togglePrepared(r._id, activeTab)}
+                        className={`py-2.5 px-5 rounded-xl border text-xs font-bold transition-all shrink-0 flex items-center gap-1.5 cursor-pointer ${buttonStyle}`}
+                      >
+                        {isPrepared ? (
+                          <>
+                            <span className="w-2 h-2 rounded-full bg-emerald-600" />
+                            <span>Prepared ✓</span>
+                          </>
+                        ) : (
+                          <>
+                            <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
+                            <span>Pending</span>
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  );
+                }
+
+                // Overall Tab list layout
                 return (
                   <div
                     key={r._id}
@@ -156,7 +270,7 @@ export default function AdminRequestsPage() {
                       {r.breakfast && (
                         <button
                           onClick={() => togglePrepared(r._id, 'breakfast')}
-                          className={`py-2 px-3 rounded-xl border text-xs font-semibold flex flex-col items-center gap-1 transition-all ${
+                          className={`py-2 px-3 rounded-xl border text-xs font-semibold flex flex-col items-center gap-1 transition-all cursor-pointer ${
                             prep.breakfast
                               ? 'bg-slate-100 border-slate-300 text-slate-400 line-through'
                               : 'bg-orange-50/50 border-orange-200 text-orange-800'
@@ -171,7 +285,7 @@ export default function AdminRequestsPage() {
                       {r.lunch && (
                         <button
                           onClick={() => togglePrepared(r._id, 'lunch')}
-                          className={`py-2 px-3 rounded-xl border text-xs font-semibold flex flex-col items-center gap-1 transition-all ${
+                          className={`py-2 px-3 rounded-xl border text-xs font-semibold flex flex-col items-center gap-1 transition-all cursor-pointer ${
                             prep.lunch
                               ? 'bg-slate-100 border-slate-300 text-slate-400 line-through'
                               : 'bg-green-50/50 border-green-200 text-green-800'
@@ -186,7 +300,7 @@ export default function AdminRequestsPage() {
                       {r.dinner && (
                         <button
                           onClick={() => togglePrepared(r._id, 'dinner')}
-                          className={`py-2 px-3 rounded-xl border text-xs font-semibold flex flex-col items-center gap-1 transition-all ${
+                          className={`py-2 px-3 rounded-xl border text-xs font-semibold flex flex-col items-center gap-1 transition-all cursor-pointer ${
                             prep.dinner
                               ? 'bg-slate-100 border-slate-300 text-slate-400 line-through'
                               : 'bg-blue-50/50 border-blue-200 text-blue-800'

@@ -3,10 +3,10 @@ import { getSessionUser } from '@/lib/auth';
 import { connectDB } from '@/lib/mongodb';
 import User from '@/lib/models/User';
 import MealRequest from '@/lib/models/MealRequest';
+import MealPrice from '@/lib/models/MealPrice';
 import TopUp from '@/lib/models/TopUp';
 import * as XLSX from 'xlsx';
 import PDFDocument from 'pdfkit';
-import { Readable } from 'stream';
 import fs from 'fs';
 import path from 'path';
 
@@ -34,6 +34,7 @@ export async function GET(req: NextRequest) {
     const startDate = searchParams.get('startDate') ?? new Date().toISOString().slice(0, 10);
     const endDate = searchParams.get('endDate') ?? new Date().toISOString().slice(0, 10);
     const format = searchParams.get('format'); // csv, xlsx, pdf
+    const mealType = searchParams.get('mealType'); // breakfast, lunch, dinner
 
     await connectDB();
 
@@ -53,6 +54,15 @@ export async function GET(req: NextRequest) {
     const topups = await TopUp.find({
       createdAt: { $gte: startOfDay, $lte: endOfDay },
     }).lean();
+
+    // Fetch prices to resolve single meal prices
+    const prices = await MealPrice.findOne().lean();
+
+    // Filter requests by mealType if provided
+    let filteredRequests = requests;
+    if (mealType && ['breakfast', 'lunch', 'dinner'].includes(mealType)) {
+      filteredRequests = requests.filter((r: any) => r[mealType] === true);
+    }
 
     // Aggregate topups by userId
     const topupsByUser: Record<string, { totalAmount: number; count: number; details: string }> = {};
@@ -75,12 +85,25 @@ export async function GET(req: NextRequest) {
     let totalIncomeAmount = 0;
     let totalTopupsAmount = topups.reduce((sum, t) => sum + t.amount, 0);
 
-    const reportRows = requests.map((r: any) => {
+    const reportRows = filteredRequests.map((r: any) => {
       const user = r.userId || {};
       const uId = String(user._id || '');
-      const mealsCount = (r.breakfast ? 1 : 0) + (r.lunch ? 1 : 0) + (r.dinner ? 1 : 0);
+      
+      let mealsCount = 0;
+      let mealCost = 0;
+
+      if (mealType && ['breakfast', 'lunch', 'dinner'].includes(mealType)) {
+        mealsCount = 1;
+        mealCost = mealType === 'breakfast' ? (prices?.breakfastPrice ?? 0) :
+                   mealType === 'lunch' ? (prices?.lunchPrice ?? 0) :
+                   (prices?.dinnerPrice ?? 0);
+      } else {
+        mealsCount = (r.breakfast ? 1 : 0) + (r.lunch ? 1 : 0) + (r.dinner ? 1 : 0);
+        mealCost = r.totalAmount || 0;
+      }
+
       totalMealsCount += mealsCount;
-      totalIncomeAmount += r.totalAmount || 0;
+      totalIncomeAmount += mealCost;
 
       return {
         userName: user.fullName || 'Unknown User',
@@ -90,7 +113,7 @@ export async function GET(req: NextRequest) {
         breakfast: r.breakfast ? 'Yes' : 'No',
         lunch: r.lunch ? 'Yes' : 'No',
         dinner: r.dinner ? 'Yes' : 'No',
-        mealCost: r.totalAmount || 0,
+        mealCost,
         walletBalance: user.walletBalance ?? 0,
         topupDetails: topupsByUser[uId]?.details || 'None',
         mealsCount,
@@ -107,31 +130,39 @@ export async function GET(req: NextRequest) {
 
     // Handle format exports
     if (format === 'csv') {
-      const headers = [
-        'User Name',
-        'Employee ID',
-        'Work Email',
-        'Date',
-        'Breakfast',
-        'Lunch',
-        'Dinner',
-        'Meal Cost',
-        'Meals Count',
-      ];
+      const headers = mealType 
+        ? ['S.No.', 'User Name']
+        : [
+            'User Name',
+            'Employee ID',
+            'Work Email',
+            'Date',
+            'Breakfast',
+            'Lunch',
+            'Dinner',
+            'Meal Cost',
+            'Meals Count',
+          ];
 
       let csvContent = headers.join(',') + '\n';
+      let index = 1;
       for (const row of reportRows) {
-        const line = [
-          `"${row.userName.replace(/"/g, '""')}"`,
-          `"${row.employeeId.replace(/"/g, '""')}"`,
-          `"${row.workEmail.replace(/"/g, '""')}"`,
-          `"${row.date}"`,
-          `"${row.breakfast}"`,
-          `"${row.lunch}"`,
-          `"${row.dinner}"`,
-          row.mealCost,
-          row.mealsCount,
-        ];
+        const line = mealType
+          ? [
+              index++,
+              `"${row.userName.replace(/"/g, '""')}"`,
+            ]
+          : [
+              `"${row.userName.replace(/"/g, '""')}"`,
+              `"${row.employeeId.replace(/"/g, '""')}"`,
+              `"${row.workEmail.replace(/"/g, '""')}"`,
+              `"${row.date}"`,
+              `"${row.breakfast}"`,
+              `"${row.lunch}"`,
+              `"${row.dinner}"`,
+              row.mealCost,
+              row.mealsCount,
+            ];
         csvContent += line.join(',') + '\n';
       }
 
@@ -139,58 +170,92 @@ export async function GET(req: NextRequest) {
       csvContent += '\nSummary Info\n';
       csvContent += `Start Date,${startDate}\n`;
       csvContent += `End Date,${endDate}\n`;
-      csvContent += `Total Meals Count,${totalMealsCount}\n`;
-      csvContent += `Total Income in Range,Rs.${Number(totalIncomeAmount || 0).toFixed(2)}\n`;
-      csvContent += `Total Top-ups in Range,Rs.${Number(totalTopupsAmount || 0).toFixed(2)}\n`;
+      if (mealType) {
+        csvContent += `Total ${mealType.charAt(0).toUpperCase() + mealType.slice(1)} Count,${totalMealsCount}\n`;
+      } else {
+        csvContent += `Total Meals Count,${totalMealsCount}\n`;
+        csvContent += `Total Income in Range,Rs.${Number(totalIncomeAmount || 0).toFixed(2)}\n`;
+        csvContent += `Total Top-ups in Range,Rs.${Number(totalTopupsAmount || 0).toFixed(2)}\n`;
+      }
+
+      const filename = mealType
+        ? `chammery_${mealType}_report_${startDate}_to_${endDate}.csv`
+        : `chammery_report_${startDate}_to_${endDate}.csv`;
 
       return new Response(csvContent, {
         headers: {
           'Content-Type': 'text/csv; charset=utf-8',
-          'Content-Disposition': `attachment; filename=chammery_report_${startDate}_to_${endDate}.csv`,
+          'Content-Disposition': `attachment; filename=${filename}`,
         },
       });
     }
 
     if (format === 'xlsx') {
-      const wsData = reportRows.map((row) => ({
-        'User Name': row.userName,
-        'Employee ID': row.employeeId,
-        'Work Email': row.workEmail,
-        'Date': row.date,
-        'Breakfast': row.breakfast,
-        'Lunch': row.lunch,
-        'Dinner': row.dinner,
-        'Meal Cost (INR)': row.mealCost,
-        'Meals Count': row.mealsCount,
-      }));
+      let index = 1;
+      const wsData = reportRows.map((row) => {
+        if (mealType) {
+          return {
+            'S.No.': index++,
+            'User Name': row.userName,
+          };
+        } else {
+          return {
+            'User Name': row.userName,
+            'Employee ID': row.employeeId,
+            'Work Email': row.workEmail,
+            'Date': row.date,
+            'Breakfast': row.breakfast,
+            'Lunch': row.lunch,
+            'Dinner': row.dinner,
+            'Meal Cost (INR)': row.mealCost,
+            'Meals Count': row.mealsCount,
+          };
+        }
+      });
 
       const wb = XLSX.utils.book_new();
       const ws = XLSX.utils.json_to_sheet(wsData);
-      XLSX.utils.book_append_sheet(wb, ws, 'Meal Report');
+      const sheetName = mealType ? `${mealType.charAt(0).toUpperCase() + mealType.slice(1)} Report` : 'Meal Report';
+      XLSX.utils.book_append_sheet(wb, ws, sheetName);
 
       // Add summary sheet
-      const summaryData = [
-        { Metric: 'Start Date', Value: startDate },
-        { Metric: 'End Date', Value: endDate },
-        { Metric: 'Total Meals Count', Value: totalMealsCount },
-        { Metric: 'Total Income in Range (INR)', Value: totalIncomeAmount },
-        { Metric: 'Total Top-ups in Range (INR)', Value: totalTopupsAmount },
-      ];
+      const summaryData = mealType
+        ? [
+            { Metric: 'Start Date', Value: startDate },
+            { Metric: 'End Date', Value: endDate },
+            { Metric: `Total ${mealType.charAt(0).toUpperCase() + mealType.slice(1)} Count`, Value: totalMealsCount },
+          ]
+        : [
+            { Metric: 'Start Date', Value: startDate },
+            { Metric: 'End Date', Value: endDate },
+            { Metric: 'Total Meals Count', Value: totalMealsCount },
+            { Metric: 'Total Income in Range (INR)', Value: totalIncomeAmount },
+            { Metric: 'Total Top-ups in Range (INR)', Value: totalTopupsAmount },
+          ];
       const wsSummary = XLSX.utils.json_to_sheet(summaryData);
       XLSX.utils.book_append_sheet(wb, wsSummary, 'Summary');
 
       const buffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
 
+      const filename = mealType
+        ? `chammery_${mealType}_report_${startDate}_to_${endDate}.xlsx`
+        : `chammery_report_${startDate}_to_${endDate}.xlsx`;
+
       return new Response(new Uint8Array(buffer), {
         headers: {
           'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-          'Content-Disposition': `attachment; filename=chammery_report_${startDate}_to_${endDate}.xlsx`,
+          'Content-Disposition': `attachment; filename=${filename}`,
         },
       });
     }
 
     if (format === 'pdf') {
-      const doc = new PDFDocument({ margin: 30, size: 'A4', layout: 'landscape' });
+      const isLandscape = !mealType;
+      const doc = new PDFDocument({ 
+        margin: 30, 
+        size: 'A4', 
+        layout: isLandscape ? 'landscape' : 'portrait' 
+      });
       const chunks: any[] = [];
 
       doc.on('data', (chunk) => chunks.push(chunk));
@@ -199,85 +264,125 @@ export async function GET(req: NextRequest) {
         ? `Report Date: ${startDate}` 
         : `Report Range: ${startDate} to ${endDate}`;
 
+      // Custom Color Themes based on Meal Type
+      const bannerColor = mealType === 'breakfast' ? '#a85507' :
+                          mealType === 'lunch' ? '#166534' :
+                          mealType === 'dinner' ? '#1e3a8a' :
+                          '#4E220F';
+      const bannerBg = mealType === 'breakfast' ? '#fef3c7' :
+                        mealType === 'lunch' ? '#dcfce7' :
+                        mealType === 'dinner' ? '#dbeafe' :
+                        '#F7F1DE';
+
+      const bannerWidth = isLandscape ? 842 : 595;
+      const rightAlignX = isLandscape ? 500 : 300;
+      const rightAlignW = isLandscape ? 302 : 255;
+      const tableWidth = isLandscape ? 762 : 515;
+      const tableLineTo = isLandscape ? 802 : 555;
+      const maxPageY = isLandscape ? 520 : 760;
+
       // Brand Header Banner
-      doc.rect(0, 0, 842, 60).fill('#4E220F');
+      doc.rect(0, 0, bannerWidth, 60).fill(bannerColor);
       
       // Header Title
-      doc.fillColor('#FFFFFF').font('Helvetica-Bold').fontSize(16).text('CHAMMERY OFFICE MEALS REPORT', 40, 22);
+      const titleText = mealType
+        ? `CHAMMERY OFFICE ${mealType.toUpperCase()} CHECKLIST`
+        : 'CHAMMERY OFFICE MEALS REPORT';
+      doc.fillColor('#FFFFFF').font('Helvetica-Bold').fontSize(16).text(titleText, 40, 22);
       
       // Date Subheader in banner
-      doc.fillColor('#F7F1DE').font('Helvetica-Bold').fontSize(11).text(dateText, 500, 25, { width: 302, align: 'right' });
+      doc.fillColor(bannerBg === '#F7F1DE' ? '#F7F1DE' : '#FFFFFF').font('Helvetica-Bold').fontSize(11).text(dateText, rightAlignX, 25, { width: rightAlignW, align: 'right' });
 
       const startY = 90;
 
       // Table Header Row fill
-      doc.rect(40, startY - 4, 762, 18).fill('#F7F1DE');
+      doc.rect(40, startY - 4, tableWidth, 18).fill(bannerBg);
       
       // Table Header Labels
-      doc.fillColor('#4E220F').font('Helvetica-Bold').fontSize(9);
-      doc.text('User Name', 45, startY);
-      doc.text('Breakfast', 310, startY, { width: 80, align: 'center' });
-      doc.text('Lunch', 410, startY, { width: 80, align: 'center' });
-      doc.text('Dinner', 510, startY, { width: 80, align: 'center' });
-      doc.text('Cost', 610, startY, { width: 80, align: 'right' });
-      doc.text('Meals Count', 710, startY, { width: 80, align: 'right' });
+      doc.fillColor(bannerColor).font('Helvetica-Bold').fontSize(9);
+      if (mealType) {
+        doc.text('S.No.', 45, startY, { width: 50 });
+        doc.text('User Name', 110, startY, { width: 350 });
+      } else {
+        doc.text('User Name', 45, startY);
+        doc.text('Breakfast', 310, startY, { width: 80, align: 'center' });
+        doc.text('Lunch', 410, startY, { width: 80, align: 'center' });
+        doc.text('Dinner', 510, startY, { width: 80, align: 'center' });
+        doc.text('Cost', 610, startY, { width: 80, align: 'right' });
+        doc.text('Meals Count', 710, startY, { width: 80, align: 'right' });
+      }
 
       // Draw double border bottom for header
-      doc.moveTo(40, startY + 16).lineTo(802, startY + 16).strokeColor('#B0BA99').lineWidth(1.5).stroke();
+      doc.moveTo(40, startY + 16).lineTo(tableLineTo, startY + 16).strokeColor('#B0BA99').lineWidth(1.5).stroke();
       doc.moveDown(0.8);
 
       let currentY = startY + 24;
+      let pdfIndex = 1;
 
       for (const row of reportRows) {
-        if (currentY > 520) {
-          doc.addPage({ size: 'A4', layout: 'landscape', margin: 30 });
+        if (currentY > maxPageY) {
+          doc.addPage({ 
+            size: 'A4', 
+            layout: isLandscape ? 'landscape' : 'portrait', 
+            margin: 30 
+          });
           
           // Redraw Header Banner on new page
-          doc.rect(0, 0, 842, 60).fill('#4E220F');
-          doc.fillColor('#FFFFFF').font('Helvetica-Bold').fontSize(16).text('CHAMMERY OFFICE MEALS REPORT', 40, 22);
-          doc.fillColor('#F7F1DE').font('Helvetica-Bold').fontSize(11).text(dateText, 500, 25, { width: 302, align: 'right' });
+          doc.rect(0, 0, bannerWidth, 60).fill(bannerColor);
+          doc.fillColor('#FFFFFF').font('Helvetica-Bold').fontSize(16).text(titleText, 40, 22);
+          doc.fillColor(bannerBg === '#F7F1DE' ? '#F7F1DE' : '#FFFFFF').font('Helvetica-Bold').fontSize(11).text(dateText, rightAlignX, 25, { width: rightAlignW, align: 'right' });
 
           const pageStartY = 90;
-          doc.rect(40, pageStartY - 4, 762, 18).fill('#F7F1DE');
-          doc.fillColor('#4E220F').font('Helvetica-Bold').fontSize(9);
-          doc.text('User Name', 45, pageStartY);
-          doc.text('Breakfast', 310, pageStartY, { width: 80, align: 'center' });
-          doc.text('Lunch', 410, pageStartY, { width: 80, align: 'center' });
-          doc.text('Dinner', 510, pageStartY, { width: 80, align: 'center' });
-          doc.text('Cost', 610, pageStartY, { width: 80, align: 'right' });
-          doc.text('Meals Count', 710, pageStartY, { width: 80, align: 'right' });
+          doc.rect(40, pageStartY - 4, tableWidth, 18).fill(bannerBg);
+          doc.fillColor(bannerColor).font('Helvetica-Bold').fontSize(9);
+          if (mealType) {
+            doc.text('S.No.', 45, pageStartY, { width: 50 });
+            doc.text('User Name', 110, pageStartY, { width: 350 });
+          } else {
+            doc.text('User Name', 45, pageStartY);
+            doc.text('Breakfast', 310, pageStartY, { width: 80, align: 'center' });
+            doc.text('Lunch', 410, pageStartY, { width: 80, align: 'center' });
+            doc.text('Dinner', 510, pageStartY, { width: 80, align: 'center' });
+            doc.text('Cost', 610, pageStartY, { width: 80, align: 'right' });
+            doc.text('Meals Count', 710, pageStartY, { width: 80, align: 'right' });
+          }
 
-          doc.moveTo(40, pageStartY + 16).lineTo(802, pageStartY + 16).strokeColor('#B0BA99').lineWidth(1.5).stroke();
+          doc.moveTo(40, pageStartY + 16).lineTo(tableLineTo, pageStartY + 16).strokeColor('#B0BA99').lineWidth(1.5).stroke();
           currentY = pageStartY + 24;
         }
 
         // Row Content
-        doc.fillColor('#4E220F').font('Helvetica').fontSize(9).text(row.userName, 45, currentY, { width: 250, lineBreak: false });
-
-        // Styled check status indicators
-        if (row.breakfast === 'Yes') {
-          doc.fillColor('#22c55e').font('Helvetica-Bold').text('Yes', 310, currentY, { width: 80, align: 'center' });
+        if (mealType) {
+          doc.fillColor('#4E220F').font('Helvetica').fontSize(9).text(String(pdfIndex++), 45, currentY, { width: 50 });
+          doc.fillColor('#4E220F').font('Helvetica').text(row.userName, 110, currentY, { width: 350, lineBreak: false });
         } else {
-          doc.fillColor('#94a3b8').font('Helvetica').text('-', 310, currentY, { width: 80, align: 'center' });
-        }
+          doc.fillColor('#4E220F').font('Helvetica').fontSize(9).text(row.userName, 45, currentY, { width: 250, lineBreak: false });
 
-        if (row.lunch === 'Yes') {
-          doc.fillColor('#22c55e').font('Helvetica-Bold').text('Yes', 410, currentY, { width: 80, align: 'center' });
-        } else {
-          doc.fillColor('#94a3b8').font('Helvetica').text('-', 410, currentY, { width: 80, align: 'center' });
-        }
+          // Styled check status indicators
+          if (row.breakfast === 'Yes') {
+            doc.fillColor('#22c55e').font('Helvetica-Bold').text('Yes', 310, currentY, { width: 80, align: 'center' });
+          } else {
+            doc.fillColor('#94a3b8').font('Helvetica').text('-', 310, currentY, { width: 80, align: 'center' });
+          }
 
-        if (row.dinner === 'Yes') {
-          doc.fillColor('#22c55e').font('Helvetica-Bold').text('Yes', 510, currentY, { width: 80, align: 'center' });
-        } else {
-          doc.fillColor('#94a3b8').font('Helvetica').text('-', 510, currentY, { width: 80, align: 'center' });
-        }
+          if (row.lunch === 'Yes') {
+            doc.fillColor('#22c55e').font('Helvetica-Bold').text('Yes', 410, currentY, { width: 80, align: 'center' });
+          } else {
+            doc.fillColor('#94a3b8').font('Helvetica').text('-', 410, currentY, { width: 80, align: 'center' });
+          }
 
-        doc.fillColor('#4E220F').font('Helvetica-Bold').text(`Rs.${Number(row.mealCost || 0).toFixed(2)}`, 610, currentY, { width: 80, align: 'right' });
-        doc.fillColor('#4E220F').font('Helvetica').text(String(row.mealsCount), 710, currentY, { width: 80, align: 'right' });
+          if (row.dinner === 'Yes') {
+            doc.fillColor('#22c55e').font('Helvetica-Bold').text('Yes', 510, currentY, { width: 80, align: 'center' });
+          } else {
+            doc.fillColor('#94a3b8').font('Helvetica').text('-', 510, currentY, { width: 80, align: 'center' });
+          }
+
+          doc.fillColor('#4E220F').font('Helvetica-Bold').text(`Rs.${Number(row.mealCost || 0).toFixed(2)}`, 610, currentY, { width: 80, align: 'right' });
+          doc.fillColor('#4E220F').font('Helvetica').text(String(row.mealsCount), 710, currentY, { width: 80, align: 'right' });
+        }
 
         // Soft divider line below row
-        doc.moveTo(40, currentY + 12).lineTo(802, currentY + 12).strokeColor('#E5E7EB').lineWidth(0.5).stroke();
+        doc.moveTo(40, currentY + 12).lineTo(tableLineTo, currentY + 12).strokeColor('#E5E7EB').lineWidth(0.5).stroke();
 
         currentY += 18;
       }
@@ -292,10 +397,14 @@ export async function GET(req: NextRequest) {
 
       const pdfBuffer = await pdfPromise;
 
+      const filename = mealType
+        ? `chammery_${mealType}_report_${startDate}_to_${endDate}.pdf`
+        : `chammery_report_${startDate}_to_${endDate}.pdf`;
+
       return new Response(new Uint8Array(pdfBuffer), {
         headers: {
           'Content-Type': 'application/pdf',
-          'Content-Disposition': `attachment; filename=chammery_report_${startDate}_to_${endDate}.pdf`,
+          'Content-Disposition': `attachment; filename=${filename}`,
         },
       });
     }

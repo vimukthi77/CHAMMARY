@@ -54,6 +54,10 @@ export default function DashboardPage() {
   const [successMessage, setSuccessMessage] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
   
+  // Cutoff Switching states
+  const [targetDate, setTargetDate] = useState<string>('');
+  const [isTomorrow, setIsTomorrow] = useState<boolean>(false);
+  
   // Time state for client-side cutoff checks
   const [currentMinutes, setCurrentMinutes] = useState(0);
 
@@ -75,6 +79,8 @@ export default function DashboardPage() {
 
       setUser({ fullName: meData.fullName, walletBalance: meData.walletBalance });
       setPrices(mealData.prices);
+      setTargetDate(mealData.targetDate || '');
+      setIsTomorrow(mealData.isTomorrow || false);
 
       if (mealData.request) {
         setExisting(mealData.request);
@@ -109,6 +115,7 @@ export default function DashboardPage() {
 
   // Cutoff checks in minutes
   const isCutoffExceeded = (key: MealKey) => {
+    if (isTomorrow) return false; // Bypass cutoffs for tomorrow's orders
     if (!prices) return false;
     const parseTimeToMinutes = (timeStr: string) => {
       const [h, m] = timeStr.split(':').map(Number);
@@ -189,6 +196,9 @@ export default function DashboardPage() {
         setSelected({ breakfast: false, lunch: false, dinner: false });
       }
 
+      if (data.targetDate) setTargetDate(data.targetDate);
+      if (data.isTomorrow !== undefined) setIsTomorrow(data.isTomorrow);
+
       setSuccessMessage(noneSelected ? 'Meal request cancelled successfully.' : 'Meal request submitted successfully.');
       setUser((u) => u ? { ...u, walletBalance: data.balanceAfter } : u);
     } catch {
@@ -248,6 +258,17 @@ export default function DashboardPage() {
     year: 'numeric',
   });
 
+  function formatLocalDateString(dateStr: string) {
+    if (!dateStr) return '';
+    const [year, month, day] = dateStr.split('-').map(Number);
+    const date = new Date(year, month - 1, day);
+    return date.toLocaleDateString('en-IN', {
+      day: 'numeric',
+      month: 'long',
+      year: 'numeric',
+    });
+  }
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-48">
@@ -263,12 +284,16 @@ export default function DashboardPage() {
         <div>
           <p className="text-xs font-bold text-[var(--muted)] uppercase tracking-wider">Welcome,</p>
           <h1 className="text-xl font-bold text-[var(--foreground)] mt-0.5">
-            {user ? user.fullName.split(' ')[0] : 'User'}
+            {user?.fullName ? user.fullName.split(' ')[0] : 'User'}
           </h1>
         </div>
         <div className="text-right">
-          <p className="text-[10px] font-bold text-[var(--muted)] uppercase tracking-wider">Today&apos;s Date</p>
-          <p className="text-xs font-semibold text-[var(--foreground)] mt-0.5">{today}</p>
+          <p className="text-[10px] font-bold text-[var(--muted)] uppercase tracking-wider">
+            {isTomorrow ? 'Ordering For' : 'Today\'s Date'}
+          </p>
+          <p className="text-xs font-semibold text-[var(--foreground)] mt-0.5">
+            {targetDate ? formatLocalDateString(targetDate) : today}
+          </p>
         </div>
       </div>
 
@@ -284,7 +309,7 @@ export default function DashboardPage() {
       {existing && (
         <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3.5 text-center">
           <p className="text-xs text-emerald-800 font-bold">
-            Order confirmed for today. You can modify remaining options before their cutoffs.
+            Order confirmed for {isTomorrow ? 'tomorrow' : 'today'}. {isTomorrow ? 'You can modify your selection until tomorrow\'s cutoffs.' : 'You can modify remaining options before their cutoffs.'}
           </p>
         </div>
       )}
@@ -292,7 +317,7 @@ export default function DashboardPage() {
       {/* Meal Selection Checklist */}
       <div className="space-y-3">
         <h2 className="text-xs font-bold text-[var(--muted)] uppercase tracking-wider px-1">
-          Today&apos;s Meal Options
+          {isTomorrow ? 'Request your tomorrow meals' : 'Today\'s Meal Options'}
         </h2>
         {MEALS.map(({ key, label, priceKey }) => {
           const price = prices?.[priceKey] ?? 0;
@@ -325,7 +350,12 @@ export default function DashboardPage() {
                   {label}
                 </span>
                 <span className="text-[10px] text-[var(--muted)] font-semibold mt-0.5 block">
-                  {disabled ? `Closed (Cutoff: ${timeLimit})` : `Order before ${timeLimit}`}
+                  {isTomorrow 
+                    ? `Cutoff: ${timeLimit} tomorrow`
+                    : disabled 
+                    ? `Closed (Cutoff: ${timeLimit})` 
+                    : `Order before ${timeLimit}`
+                  }
                 </span>
               </div>
               
