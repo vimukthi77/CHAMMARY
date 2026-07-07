@@ -80,6 +80,35 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
   }
 }
 
+// ── DELETE: permanently remove a user and their related records ────────────────
+export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const session = await getSessionUser();
+  if (!session || session.role !== 'admin') {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
+  const { id } = await params;
+
+  // Prevent an admin from deleting their own account.
+  if (id === session.userId) {
+    return NextResponse.json({ error: 'You cannot delete your own account.' }, { status: 400 });
+  }
+
+  await connectDB();
+
+  const user = await User.findById(id);
+  if (!user) return NextResponse.json({ error: 'User not found.' }, { status: 404 });
+
+  // Clean up related records so nothing is left orphaned.
+  await Promise.all([
+    MealRequest.deleteMany({ userId: id }),
+    TopUp.deleteMany({ userId: id }),
+  ]);
+  await User.deleteOne({ _id: id });
+
+  return NextResponse.json({ ok: true });
+}
+
 // ── POST: reset password (generates, hashes, returns plain text once) ──────────
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const session = await getSessionUser();

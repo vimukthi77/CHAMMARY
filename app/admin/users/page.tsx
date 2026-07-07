@@ -23,6 +23,8 @@ export default function AdminUsersPage() {
   const [editForm, setEditForm] = useState({ fullName: '', employeeId: '', workEmail: '' });
   const [tempPassword, setTempPassword] = useState('');
   const [passwordResetUser, setPasswordResetUser] = useState<StaffUser | null>(null);
+  const [deletingUser, setDeletingUser] = useState<StaffUser | null>(null);
+  const [deleteBusy, setDeleteBusy] = useState(false);
 
   const loadUsers = useCallback(async (q = '') => {
     setLoading(true);
@@ -117,6 +119,28 @@ export default function AdminUsersPage() {
     }
   }
 
+  // Delete user permanently
+  async function confirmDelete() {
+    if (!deletingUser) return;
+    setDeleteBusy(true);
+    try {
+      const res = await fetch(`/api/admin/users/${deletingUser._id}`, {
+        method: 'DELETE',
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        alert(data.error ?? 'Failed to delete user.');
+        return;
+      }
+      setUsers((prev) => prev.filter((u) => u._id !== deletingUser._id));
+      setDeletingUser(null);
+    } catch {
+      alert('Network error.');
+    } finally {
+      setDeleteBusy(false);
+    }
+  }
+
   return (
     <div className="space-y-4">
       <h1 className="text-xl font-bold text-[var(--foreground)]">Staff Management</h1>
@@ -192,6 +216,12 @@ export default function AdminUsersPage() {
                   className="px-3 py-1.5 rounded-lg border border-[var(--border)] text-xs font-semibold bg-white hover:bg-slate-50 transition-colors"
                 >
                   Reset PW
+                </button>
+                <button
+                  onClick={() => setDeletingUser(user)}
+                  className="px-3 py-1.5 rounded-lg border border-red-200 bg-red-50/50 text-red-700 text-xs font-semibold hover:bg-red-50 transition-colors ml-auto"
+                >
+                  Delete
                 </button>
               </div>
             </div>
@@ -275,6 +305,37 @@ export default function AdminUsersPage() {
             >
               Done
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Confirmation Modal */}
+      {deletingUser && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm">
+          <div className="bg-[var(--card)] border border-[var(--border)] rounded-2xl p-6 w-full max-w-sm space-y-4 shadow-xl">
+            <h3 className="font-bold text-base text-red-600">Delete Staff Member</h3>
+            <p className="text-sm text-[var(--muted)]">
+              This will permanently delete <strong>{deletingUser.fullName}</strong> ({deletingUser.workEmail})
+              along with all of their meal requests and top-up history. This action cannot be undone.
+            </p>
+            <div className="flex gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setDeletingUser(null)}
+                disabled={deleteBusy}
+                className="flex-1 h-10 rounded-lg border border-[var(--border)] text-sm font-semibold disabled:opacity-60"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={confirmDelete}
+                disabled={deleteBusy}
+                className="flex-1 h-10 rounded-lg bg-red-600 text-white text-sm font-semibold hover:bg-red-700 transition-colors disabled:opacity-60"
+              >
+                {deleteBusy ? 'Deleting…' : 'Delete'}
+              </button>
+            </div>
           </div>
         </div>
       )}
