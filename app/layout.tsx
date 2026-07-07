@@ -11,6 +11,11 @@ const inter = Inter({
 export const metadata: Metadata = {
   title: 'Chammery — Office Meal Ordering',
   description: 'Simple, fast meal ordering for the office. Order breakfast, lunch, and dinner in seconds.',
+  icons: {
+    icon: '/next.png',
+    shortcut: '/next.png',
+    apple: '/next.png',
+  },
 };
 
 export const viewport: Viewport = {
