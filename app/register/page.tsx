@@ -2,10 +2,8 @@
 
 import { useState, FormEvent } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
 
 export default function RegisterPage() {
-  const router = useRouter();
   const [form, setForm] = useState({
     fullName: '',
     employeeId: '',
@@ -14,6 +12,7 @@ export default function RegisterPage() {
   });
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
 
   function update(field: string) {
     return (e: React.ChangeEvent<HTMLInputElement>) =>
@@ -38,7 +37,8 @@ export default function RegisterPage() {
         return;
       }
 
-      router.push('/dashboard');
+      window.location.assign('/dashboard');
+      return;
     } catch {
       setError('Network error. Please try again.');
     } finally {
@@ -70,23 +70,42 @@ export default function RegisterPage() {
           )}
 
           <form onSubmit={handleSubmit} className="space-y-4">
-            {fields.map(({ id, label, field, type, placeholder, autoComplete }) => (
-              <div key={field}>
-                <label className="block text-xs font-bold text-[var(--foreground)] uppercase tracking-wider mb-1.5" htmlFor={id}>
-                  {label}
-                </label>
-                <input
-                  id={id}
-                  type={type}
-                  autoComplete={autoComplete}
-                  required
-                  value={form[field as keyof typeof form]}
-                  onChange={update(field)}
-                  className="w-full h-12 px-3.5 rounded-xl border-2 border-[var(--border)] bg-white text-[var(--foreground)] text-sm focus:ring-2 focus:ring-[var(--foreground)] focus:border-[var(--foreground)] transition-all duration-150"
-                  placeholder={placeholder}
-                />
-              </div>
-            ))}
+            {fields.map(({ id, label, field, type, placeholder, autoComplete }) => {
+              const isPassword = type === 'password';
+              return (
+                <div key={field}>
+                  <label className="block text-xs font-bold text-[var(--foreground)] uppercase tracking-wider mb-1.5" htmlFor={id}>
+                    {label}
+                  </label>
+                  <div className="relative">
+                    <input
+                      id={id}
+                      type={isPassword && showPassword ? 'text' : type}
+                      autoComplete={autoComplete}
+                      required
+                      minLength={isPassword ? 6 : undefined}
+                      value={form[field as keyof typeof form]}
+                      onChange={update(field)}
+                      className={`w-full h-12 pl-3.5 ${isPassword ? 'pr-12' : 'pr-3.5'} rounded-xl border-2 border-[var(--border)] bg-white text-[var(--foreground)] text-sm focus:ring-2 focus:ring-[var(--foreground)] focus:border-[var(--foreground)] transition-all duration-150`}
+                      placeholder={placeholder}
+                    />
+                    {isPassword && (
+                      <button
+                        type="button"
+                        onClick={() => setShowPassword((v) => !v)}
+                        aria-label={showPassword ? 'Hide password' : 'Show password'}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--muted)] hover:text-[var(--foreground)] transition-colors text-xs font-bold"
+                      >
+                        {showPassword ? 'Hide' : 'Show'}
+                      </button>
+                    )}
+                  </div>
+                  {isPassword && (
+                    <p className="text-[11px] text-[var(--muted)] font-semibold mt-1">Use at least 6 characters.</p>
+                  )}
+                </div>
+              );
+            })}
 
             <p className="text-xs text-[var(--muted)] font-semibold leading-relaxed">
               Your wallet starts at Rs.0.00. Ask Ajith for a top-up to place orders.
