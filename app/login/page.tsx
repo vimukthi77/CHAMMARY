@@ -2,6 +2,7 @@
 
 import { useState, useEffect, FormEvent } from 'react';
 import Link from 'next/link';
+import { haptic } from '@/lib/haptics';
 
 export default function LoginPage() {
   // Use a full-page navigation after login instead of router.push. On older
@@ -58,6 +59,7 @@ export default function LoginPage() {
       return;
     }
 
+    haptic(20);
     setBiometricLoading(true);
     setError('');
     try {
@@ -98,6 +100,7 @@ export default function LoginPage() {
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
+    haptic(20);
     setError('');
     setLoading(true);
 
@@ -132,6 +135,8 @@ export default function LoginPage() {
       >
         <div className="absolute inset-0 bg-black/40 backdrop-blur-[2px]" />
         <div className="relative z-10 flex flex-col justify-end p-12 text-white h-full max-w-lg">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/next.png" alt="Chammery logo" className="h-16 w-16 object-contain rounded-2xl mb-4" />
           <h1 className="text-4xl font-extrabold tracking-tight">Chammery</h1>
           <p className="text-lg text-slate-200 mt-2 font-medium">
             Prepaid office meal orders in seconds. Simple, transparent, and accurate.
@@ -155,6 +160,12 @@ export default function LoginPage() {
               </div>
             </div>
             
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src="/next.png"
+              alt="Chammery logo"
+              className="h-14 w-14 object-contain rounded-2xl mx-auto md:mx-0 mb-3"
+            />
             <h1 className="text-2xl font-black text-[var(--foreground)] tracking-tight">Welcome back</h1>
             <p className="text-sm text-[var(--muted)] mt-1 font-semibold">Sign in to check balance and order meals</p>
           </div>

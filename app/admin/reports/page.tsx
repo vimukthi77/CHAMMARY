@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 
 interface ReportRow {
@@ -61,6 +61,27 @@ export default function AdminReportsPage() {
   useEffect(() => {
     loadData();
   }, [startDate, endDate]);
+
+  // Aggregate the per-day rows into one summary line per person: how many
+  // breakfasts / lunches / dinners they had in the range and their total spend.
+  const perPerson = useMemo(() => {
+    const map = new Map<
+      string,
+      { userName: string; employeeId: string; breakfast: number; lunch: number; dinner: number; totalCost: number }
+    >();
+    for (const r of rows) {
+      const key = r.workEmail || r.employeeId || r.userName;
+      const cur =
+        map.get(key) ??
+        { userName: r.userName, employeeId: r.employeeId, breakfast: 0, lunch: 0, dinner: 0, totalCost: 0 };
+      if (r.breakfast === 'Yes') cur.breakfast++;
+      if (r.lunch === 'Yes') cur.lunch++;
+      if (r.dinner === 'Yes') cur.dinner++;
+      cur.totalCost += r.mealCost;
+      map.set(key, cur);
+    }
+    return Array.from(map.values()).sort((a, b) => b.totalCost - a.totalCost);
+  }, [rows]);
 
   const handleExport = (format: 'csv' | 'xlsx' | 'pdf') => {
     const url = `/api/admin/reports?startDate=${startDate}&endDate=${endDate}&format=${format}`;
@@ -178,8 +199,8 @@ export default function AdminReportsPage() {
       ) : (
         <div className="space-y-3">
           <div className="flex items-center justify-between px-1">
-            <h3 className="text-xs font-bold text-[var(--muted)] uppercase tracking-wider">Detailed Log</h3>
-            <span className="text-xs font-bold text-[var(--muted)]">{rows.length} rows</span>
+            <h3 className="text-xs font-bold text-[var(--muted)] uppercase tracking-wider">Meals &amp; Spend by Person</h3>
+            <span className="text-xs font-bold text-[var(--muted)]">{perPerson.length} people</span>
           </div>
 
           <div className="overflow-x-auto border-2 border-[var(--border)] rounded-2xl bg-[var(--card)] shadow-sm">
@@ -190,50 +211,26 @@ export default function AdminReportsPage() {
                   <th className="p-3 font-bold text-[10px] text-center">Breakfast</th>
                   <th className="p-3 font-bold text-[10px] text-center">Lunch</th>
                   <th className="p-3 font-bold text-[10px] text-center">Dinner</th>
-                  <th className="p-3 font-bold text-[10px] text-right">Cost</th>
+                  <th className="p-3 font-bold text-[10px] text-right">Total Cost</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[var(--border)]">
-                {rows.map((row, i) => (
-                  <tr key={`${row.userName}-${row.date}-${i}`} className="hover:bg-slate-50/50 transition-colors">
+                {perPerson.map((p, i) => (
+                  <tr key={`${p.employeeId}-${i}`} className="hover:bg-slate-50/50 transition-colors">
                     <td className="p-3 whitespace-nowrap">
-                      <p className="font-bold text-[var(--foreground)]">{row.userName}</p>
-                      <p className="text-[9px] text-[var(--muted)] mt-0.5">ID: {row.employeeId}</p>
+                      <p className="font-bold text-[var(--foreground)]">{p.userName}</p>
+                      <p className="text-[9px] text-[var(--muted)] mt-0.5">ID: {p.employeeId}</p>
                     </td>
                     <td className="p-3 text-center">
-                      <div className="flex justify-center">
-                        {row.breakfast === 'Yes' ? (
-                          <span className="w-5 h-5 rounded-full bg-green-100 border border-green-300 text-green-700 font-extrabold text-[10px] flex items-center justify-center">
-                            ✓
-                          </span>
-                        ) : (
-                          <span className="text-slate-300 font-bold">-</span>
-                        )}
-                      </div>
+                      <span className="font-extrabold text-orange-800">{p.breakfast}</span>
                     </td>
                     <td className="p-3 text-center">
-                      <div className="flex justify-center">
-                        {row.lunch === 'Yes' ? (
-                          <span className="w-5 h-5 rounded-full bg-green-100 border border-green-300 text-green-700 font-extrabold text-[10px] flex items-center justify-center">
-                            ✓
-                          </span>
-                        ) : (
-                          <span className="text-slate-300 font-bold">-</span>
-                        )}
-                      </div>
+                      <span className="font-extrabold text-green-800">{p.lunch}</span>
                     </td>
                     <td className="p-3 text-center">
-                      <div className="flex justify-center">
-                        {row.dinner === 'Yes' ? (
-                          <span className="w-5 h-5 rounded-full bg-green-100 border border-green-300 text-green-700 font-extrabold text-[10px] flex items-center justify-center">
-                            ✓
-                          </span>
-                        ) : (
-                          <span className="text-slate-300 font-bold">-</span>
-                        )}
-                      </div>
+                      <span className="font-extrabold text-blue-800">{p.dinner}</span>
                     </td>
-                    <td className="p-3 text-right font-bold text-[var(--foreground)] whitespace-nowrap">Rs.{row.mealCost.toFixed(2)}</td>
+                    <td className="p-3 text-right font-bold text-[var(--foreground)] whitespace-nowrap">Rs.{p.totalCost.toFixed(2)}</td>
                   </tr>
                 ))}
               </tbody>

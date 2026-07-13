@@ -2,6 +2,7 @@
 
 import { useState, FormEvent } from 'react';
 import Link from 'next/link';
+import { haptic } from '@/lib/haptics';
 
 export default function RegisterPage() {
   const [form, setForm] = useState({
@@ -21,6 +22,7 @@ export default function RegisterPage() {
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
+    haptic(20);
     setError('');
     setLoading(true);
 
@@ -58,6 +60,12 @@ export default function RegisterPage() {
       <div className="w-full max-w-sm">
         {/* Title */}
         <div className="text-center mb-8">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src="/next.png"
+            alt="Chammery logo"
+            className="h-14 w-14 object-contain rounded-2xl mx-auto mb-3"
+          />
           <h1 className="text-2xl font-black text-[var(--foreground)] tracking-tight">Create account</h1>
           <p className="text-sm text-[var(--muted)] mt-1 font-semibold">Join your team on Chammery</p>
         </div>

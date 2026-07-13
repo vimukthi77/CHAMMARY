@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
+import { haptic } from '@/lib/haptics';
 
 interface MealPrices {
   breakfastPrice: number;
@@ -139,6 +140,7 @@ export default function DashboardPage() {
 
   function toggle(key: MealKey) {
     if (isCutoffExceeded(key)) return; // Prevent toggle if past cutoff
+    haptic(10); // light tap feedback on mobile
     setSelected((s) => ({ ...s, [key]: !s[key] }));
     setSuccessMessage('');
     setErrorMessage('');
@@ -163,6 +165,7 @@ export default function DashboardPage() {
   const isInsufficient = currentBalance - netDelta < 0;
 
   async function handleSubmit() {
+    haptic(20); // slightly stronger confirm buzz
     setErrorMessage('');
     setSuccessMessage('');
     setSubmitting(true);

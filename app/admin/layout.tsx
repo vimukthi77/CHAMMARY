@@ -2,6 +2,7 @@
 
 import BottomNav, { NavTab } from '@/app/components/BottomNav';
 import ProfileMenu from '@/app/components/ProfileMenu';
+import Brand from '@/app/components/Brand';
 
 const tabs: NavTab[] = [
   { href: '/admin', label: 'Overview', icon: 'overview' },
@@ -17,7 +18,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     <div className="min-h-dvh flex flex-col bg-[var(--background)]">
       <header className="sticky top-0 z-30 bg-[var(--foreground)] text-white">
         <div className="max-w-md mx-auto px-4 h-14 flex items-center justify-between">
-          <span className="font-bold text-base">Chammery Admin</span>
+          <Brand text="Chammery Admin" textClass="font-bold text-base" />
           <ProfileMenu logoutId="admin-logout-btn" />
         </div>
       </header>

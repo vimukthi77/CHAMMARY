@@ -2,6 +2,7 @@
 
 import BottomNav, { NavTab } from '@/app/components/BottomNav';
 import ProfileMenu from '@/app/components/ProfileMenu';
+import Brand from '@/app/components/Brand';
 
 const tabs: NavTab[] = [
   { href: '/dashboard', label: 'Order', icon: 'order' },
@@ -16,7 +17,7 @@ export default function StaffLayout({ children }: { children: React.ReactNode })
       {/* Top nav */}
       <header className="sticky top-0 z-30 bg-[var(--card)] border-b border-[var(--border)]">
         <div className="max-w-md mx-auto px-4 h-14 flex items-center justify-between">
-          <span className="font-bold text-[var(--foreground)] text-base">Chammery</span>
+          <Brand text="Chammery" textClass="font-bold text-[var(--foreground)] text-base" />
           <ProfileMenu logoutId="logout-btn" />
         </div>
       </header>

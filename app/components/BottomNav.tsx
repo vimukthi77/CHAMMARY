@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import NavIcon, { IconName } from './NavIcon';
+import { haptic } from '@/lib/haptics';
 
 export interface NavTab {
   href: string;
@@ -34,6 +35,7 @@ export default function BottomNav({
                 key={tab.href}
                 href={tab.href}
                 id={`${idPrefix}${tab.label.toLowerCase().replace(/\s+/g, '-')}`}
+                onClick={() => haptic(8)}
                 aria-label={tab.label}
                 aria-current={active ? 'page' : undefined}
                 className={`group flex items-center justify-center rounded-xl transition-all duration-200 ${
