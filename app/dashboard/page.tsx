@@ -114,6 +114,13 @@ export default function DashboardPage() {
     return () => clearInterval(interval);
   }, [loadData]);
 
+  // Auto-hide the success popup after 2 seconds.
+  useEffect(() => {
+    if (!successMessage) return;
+    const t = setTimeout(() => setSuccessMessage(''), 2000);
+    return () => clearTimeout(t);
+  }, [successMessage]);
+
   // Cutoff checks in minutes
   const isCutoffExceeded = (key: MealKey) => {
     if (isTomorrow) return false; // Bypass cutoffs for tomorrow's orders
@@ -389,13 +396,34 @@ export default function DashboardPage() {
         </div>
       )}
 
-      {/* Success & Error alerts */}
+      {/* Success popup — auto-dismisses after 2 seconds */}
       {successMessage && (
-        <div className="px-3.5 py-3 rounded-xl bg-[var(--success-light)] border border-[var(--muted)]/30 text-sm text-[var(--success)] font-bold text-center">
-          {successMessage}
+        <div
+          role="status"
+          aria-live="polite"
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/20 pointer-events-none"
+        >
+          <div className="animate-toast-pop flex flex-col items-center gap-3 bg-[var(--card)] border-2 border-[var(--success)]/30 rounded-2xl px-8 py-6 shadow-2xl max-w-xs text-center">
+            <div className="w-14 h-14 rounded-full bg-[var(--success-light)] flex items-center justify-center">
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth={3}
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                className="w-7 h-7 text-[var(--success)]"
+                aria-hidden="true"
+              >
+                <polyline points="20 6 9 17 4 12" />
+              </svg>
+            </div>
+            <p className="text-sm font-bold text-[var(--foreground)]">{successMessage}</p>
+          </div>
         </div>
       )}
 
+      {/* Error alert */}
       {errorMessage && (
         <div className="px-3.5 py-3 rounded-xl bg-red-50 border border-red-200 text-sm text-red-700 font-bold text-center">
           {errorMessage}

@@ -50,6 +50,15 @@ body {
   padding-bottom: max(1.5rem, env(safe-area-inset-bottom));
 }
 
+/* Success toast pop-in */
+@keyframes toastPop {
+  0% { opacity: 0; transform: scale(0.9) translateY(10px); }
+  100% { opacity: 1; transform: scale(1) translateY(0); }
+}
+.animate-toast-pop {
+  animation: toastPop 200ms ease-out;
+}
+
 /* Smooth tap feedback */
 button:active,
 a:active {
