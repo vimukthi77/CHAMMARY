@@ -20,11 +20,19 @@ export default function AdminUsersPage() {
 
   // Modals state
   const [editingUser, setEditingUser] = useState<StaffUser | null>(null);
-  const [editForm, setEditForm] = useState({ fullName: '', employeeId: '', workEmail: '' });
+  const [editForm, setEditForm] = useState({ fullName: '', employeeId: '', workEmail: '', walletBalance: '' });
   const [tempPassword, setTempPassword] = useState('');
   const [passwordResetUser, setPasswordResetUser] = useState<StaffUser | null>(null);
   const [deletingUser, setDeletingUser] = useState<StaffUser | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
+  const [editSaving, setEditSaving] = useState(false);
+  const [balanceUpdate, setBalanceUpdate] = useState<{
+    name: string;
+    email: string;
+    previousBalance: number;
+    newBalance: number;
+    emailSent: boolean;
+  } | null>(null);
 
   const loadUsers = useCallback(async (q = '') => {
     setLoading(true);
@@ -72,6 +80,7 @@ export default function AdminUsersPage() {
       fullName: user.fullName,
       employeeId: user.employeeId,
       workEmail: user.workEmail,
+      walletBalance: String(user.walletBalance ?? 0),
     });
   }
 
@@ -79,11 +88,24 @@ export default function AdminUsersPage() {
     e.preventDefault();
     if (!editingUser) return;
 
+    const balance = Number(editForm.walletBalance);
+    if (Number.isNaN(balance) || balance < 0) {
+      alert('Please enter a valid balance (0 or more).');
+      return;
+    }
+
+    const editedUser = editingUser;
+    setEditSaving(true);
     try {
-      const res = await fetch(`/api/admin/users/${editingUser._id}`, {
+      const res = await fetch(`/api/admin/users/${editedUser._id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(editForm),
+        body: JSON.stringify({
+          fullName: editForm.fullName,
+          employeeId: editForm.employeeId,
+          workEmail: editForm.workEmail,
+          walletBalance: balance,
+        }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -91,11 +113,28 @@ export default function AdminUsersPage() {
         return;
       }
       setUsers((prev) =>
-        prev.map((u) => (u._id === editingUser._id ? { ...u, ...editForm } : u))
+        prev.map((u) =>
+          u._id === editedUser._id
+            ? { ...u, fullName: editForm.fullName, employeeId: editForm.employeeId, workEmail: editForm.workEmail, walletBalance: balance }
+            : u
+        )
       );
       setEditingUser(null);
+
+      // If the balance actually changed, confirm the details + email to the admin.
+      if (data.balanceChanged) {
+        setBalanceUpdate({
+          name: editForm.fullName,
+          email: data.workEmail,
+          previousBalance: data.previousBalance,
+          newBalance: data.newBalance,
+          emailSent: data.emailSent,
+        });
+      }
     } catch {
       alert('Network error.');
+    } finally {
+      setEditSaving(false);
     }
   }
 
@@ -265,22 +304,79 @@ export default function AdminUsersPage() {
                   className="w-full h-10 px-3 rounded-lg border border-[var(--border)] text-sm"
                 />
               </div>
+              <div>
+                <label className="block text-xs font-medium text-[var(--foreground)] mb-1">Wallet Balance (Rs.)</label>
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  required
+                  value={editForm.walletBalance}
+                  onChange={(e) => setEditForm((f) => ({ ...f, walletBalance: e.target.value }))}
+                  className="w-full h-10 px-3 rounded-lg border border-[var(--border)] text-sm"
+                />
+                <p className="text-[11px] text-[var(--muted)] font-semibold mt-1">
+                  Sets the balance to this exact amount. Use TopUp to add funds with a record.
+                </p>
+              </div>
               <div className="flex gap-2 pt-2">
                 <button
                   type="button"
                   onClick={() => setEditingUser(null)}
-                  className="flex-1 h-10 rounded-lg border border-[var(--border)] text-sm font-semibold"
+                  disabled={editSaving}
+                  className="flex-1 h-10 rounded-lg border border-[var(--border)] text-sm font-semibold disabled:opacity-60"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  className="flex-1 h-10 rounded-lg bg-[var(--accent)] text-white text-sm font-semibold"
+                  disabled={editSaving}
+                  className="flex-1 h-10 rounded-lg bg-[var(--accent)] text-white text-sm font-semibold disabled:opacity-60"
                 >
-                  Save
+                  {editSaving ? 'Saving…' : 'Save'}
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Balance Change Confirmation Modal */}
+      {balanceUpdate && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm">
+          <div className="bg-[var(--card)] border border-[var(--border)] rounded-2xl p-6 w-full max-w-sm space-y-4 shadow-xl">
+            <h3 className="font-bold text-base text-[var(--foreground)]">Balance Updated</h3>
+            <p className="text-sm text-[var(--muted)]">
+              <strong className="text-[var(--foreground)]">{balanceUpdate.name}</strong>&apos;s wallet balance was changed.
+            </p>
+
+            <div className="bg-slate-50 border border-[var(--border)] rounded-xl p-4 space-y-2">
+              <div className="flex justify-between items-center">
+                <span className="text-xs text-[var(--muted)] font-semibold">Previous Balance</span>
+                <span className="text-sm font-bold text-[var(--muted)] line-through">Rs.{balanceUpdate.previousBalance.toFixed(2)}</span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-xs text-[var(--muted)] font-semibold">New Balance</span>
+                <span className="text-lg font-extrabold text-[var(--foreground)]">Rs.{balanceUpdate.newBalance.toFixed(2)}</span>
+              </div>
+            </div>
+
+            <div className={`px-3 py-2.5 rounded-xl text-xs font-bold text-center ${
+              balanceUpdate.emailSent
+                ? 'bg-[var(--success-light)] text-[var(--success)] border border-[var(--muted)]/30'
+                : 'bg-red-50 text-red-700 border border-red-200'
+            }`}>
+              {balanceUpdate.emailSent
+                ? `Notification email sent to ${balanceUpdate.email}`
+                : `Balance updated, but the email to ${balanceUpdate.email} could not be sent.`}
+            </div>
+
+            <button
+              onClick={() => setBalanceUpdate(null)}
+              className="w-full h-10 rounded-lg bg-[var(--accent)] text-white text-sm font-semibold"
+            >
+              Done
+            </button>
           </div>
         </div>
       )}

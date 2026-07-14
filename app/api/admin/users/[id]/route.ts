@@ -5,6 +5,7 @@ import { connectDB } from '@/lib/mongodb';
 import User from '@/lib/models/User';
 import MealRequest from '@/lib/models/MealRequest';
 import TopUp from '@/lib/models/TopUp';
+import { sendBalanceChangeEmail } from '@/lib/mail';
 
 // ── GET: profile view details for a specific user ─────────────────────────────
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -56,21 +57,35 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
   }
 
   const { id } = await params;
-  const { fullName, employeeId, workEmail, isActive } = await req.json();
+  const { fullName, employeeId, workEmail, isActive, walletBalance } = await req.json();
 
   await connectDB();
 
   const user = await User.findById(id);
   if (!user) return NextResponse.json({ error: 'User not found.' }, { status: 404 });
 
+  const previousBalance = user.walletBalance;
+  let balanceChanged = false;
+  let newBalance = previousBalance;
+
   if (fullName !== undefined) user.fullName = fullName;
   if (employeeId !== undefined) user.employeeId = employeeId;
   if (workEmail !== undefined) user.workEmail = workEmail.toLowerCase();
   if (isActive !== undefined) user.isActive = isActive;
+  if (walletBalance !== undefined) {
+    const bal = Number(walletBalance);
+    if (Number.isNaN(bal) || bal < 0) {
+      return NextResponse.json({ error: 'Wallet balance must be 0 or more.' }, { status: 400 });
+    }
+    if (bal !== previousBalance) {
+      balanceChanged = true;
+      newBalance = bal;
+    }
+    user.walletBalance = bal;
+  }
 
   try {
     await user.save();
-    return NextResponse.json({ ok: true, user });
   } catch (err: unknown) {
     const error = err as { code?: number };
     if (error.code === 11000) {
@@ -78,6 +93,34 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
     }
     return NextResponse.json({ error: 'Failed to update user.' }, { status: 500 });
   }
+
+  // Notify the user by email when their balance was changed (best-effort).
+  let emailSent = false;
+  if (balanceChanged) {
+    try {
+      await sendBalanceChangeEmail({
+        to: user.workEmail,
+        fullName: user.fullName,
+        previousBalance,
+        newBalance,
+        changedBy: session.fullName ?? 'Admin',
+        userId: String(user._id),
+      });
+      emailSent = true;
+    } catch {
+      emailSent = false; // email failed but the balance update still succeeded
+    }
+  }
+
+  return NextResponse.json({
+    ok: true,
+    user,
+    balanceChanged,
+    previousBalance,
+    newBalance,
+    emailSent,
+    workEmail: user.workEmail,
+  });
 }
 
 // ── DELETE: permanently remove a user and their related records ────────────────
